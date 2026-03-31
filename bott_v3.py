@@ -267,7 +267,7 @@ def run_bot():
                 df_h1_live = get_data(coin, "60", limit=150)
                 if df_h1_live is None: continue
 
-                sh_h1, sl_h1 = find_swings(df_h1_live, left=8, right=8)
+                sh_h1, sl_h1 = find_swings(df_h1_live, left=50, right=50)
                 if not sh_h1 or not sl_h1: continue
 
                 curr_h1   = df_h1_live.iloc[-1]
