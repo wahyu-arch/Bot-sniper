@@ -48,7 +48,7 @@ active_positions = {}
 # FUNGSI DATA
 # ============================================================
 
-def get_data(symbol, interval, limit=300):
+def get_data(symbol, interval, limit=200):
     try:
         res = session.get_kline(
             category=CATEGORY, symbol=symbol,
@@ -264,10 +264,10 @@ def run_bot():
             try:
                 time.sleep(0.5)
 
-                df_h1_live = get_data(coin, "60", limit=250)
+                df_h1_live = get_data(coin, "60", limit=150)
                 if df_h1_live is None: continue
 
-                sh_h1, sl_h1 = find_swings(df_h1_live, left=60, right=60)
+                sh_h1, sl_h1 = find_swings(df_h1_live, left=25, right=25)
                 if not sh_h1 or not sl_h1: continue
 
                 curr_h1   = df_h1_live.iloc[-1]
