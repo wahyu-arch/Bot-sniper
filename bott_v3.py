@@ -35,7 +35,7 @@ def test_connection():
         return False
 
 SYMBOLS = [
-    'XVGUSDT', 'BELUSDT', 'TAOUSDT', '1000BONKUSDT', 'PLUMEUSDT', 'BERAUSDT',
+    'XVGUSDT', 'BELUSDT', 'TAOUSDT', '1000BONKUSDT', 'BTCUSDT', 'BERAUSDT',
     'APTUSDT', 'DASHUSDT', 'DOGEUSDT', 'JUPUSDT', 'USUALUSDT',
     'UNIUSDT', 'HANAUSDT', 'FARTCOINUSDT', '1000PEPEUSDT',
 ]
@@ -291,7 +291,7 @@ def run_bot():
                 df_h1_live = get_data(coin, "60", limit=150)
                 if df_h1_live is None: continue
 
-                sh_h1, sl_h1 = find_swings(df_h1_live, left=10, right=10)
+                sh_h1, sl_h1 = find_swings(df_h1_live, left=25, right=25)
                 if not sh_h1 or not sl_h1: continue
 
                 curr_h1   = df_h1_live.iloc[-1]
