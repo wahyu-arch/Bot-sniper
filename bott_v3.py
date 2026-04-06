@@ -88,41 +88,62 @@ def find_swings(df, left=2, right=2):
 
 def find_idm_swept(df, setup_type):
     """
-    IDM = pola price action:
-    Short: candle turun (low < low sebelumnya) -> candle berikutnya ambil high sebelum turun
-    Long : candle naik (high > high sebelumnya) -> candle berikutnya ambil low sebelum naik
-    Tidak pakai left/right, murni deteksi pola.
+    IDM = BOS single move, pola A→B→C:
+      A = candle bikin high/low
+      B = minimal 1 candle jeda yang TIDAK melewati high/low A
+      C = candle yang melewati high/low A (IDM diambil)
+
+    H1 BOS Bullish = Short setup → cari IDM BEARISH di M5
+      (single move turun: A bikin low, B tidak lebih rendah, C tembus low A)
+      Low A = level IDM, High A = batas atas IDM
+
+    H1 BOS Bearish = Long setup → cari IDM BULLISH di M5
+      (single move naik: A bikin high, B tidak lebih tinggi, C tembus high A)
+      High A = level IDM, Low A = batas bawah IDM
     """
     swept_list = []
 
     if setup_type == "Short":
-        for i in range(1, len(df) - 1):
-            # Pullback turun dulu
-            if df['low'].iloc[i] < df['low'].iloc[i-1]:
-                ref_high = df['high'].iloc[i-1]
-                # Cari candle setelahnya yang ambil high tersebut
-                for j in range(i + 1, len(df)):
-                    if df['high'].iloc[j] > ref_high:
+        # Cari IDM bearish: A bikin low → B tidak lebih rendah (jeda) → C tembus low A
+        for i in range(0, len(df) - 2):
+            low_a  = df['low'].iloc[i]
+            high_a = df['high'].iloc[i]
+            # B = candle i+1, tidak boleh melewati low A (jeda valid)
+            if df['low'].iloc[i+1] > low_a:
+                # Cari C: candle setelah B yang tembus low A
+                for j in range(i + 2, len(df)):
+                    if df['low'].iloc[j] < low_a:
                         swept_list.append({
-                            'val'      : ref_high,
-                            'idx'      : i - 1,
+                            'val'      : low_a,   # level low IDM yang diambil
+                            'high_a'   : high_a,  # high A untuk referensi BOS asli
+                            'idx'      : i,
                             'swept_idx': j,
-                            'ts'       : df['ts'].iloc[i-1]
+                            'ts'       : df['ts'].iloc[i]
                         })
                         break
-    else:  # Long
-        for i in range(1, len(df) - 1):
-            # Pullback naik dulu
-            if df['high'].iloc[i] > df['high'].iloc[i-1]:
-                ref_low = df['low'].iloc[i-1]
-                for j in range(i + 1, len(df)):
-                    if df['low'].iloc[j] < ref_low:
+                    # Kalau sebelum C ada candle yang lebih rendah dari low A, IDM tidak valid
+                    if df['low'].iloc[j] <= low_a:
+                        break
+
+    else:  # Long setup
+        # Cari IDM bullish: A bikin high → B tidak lebih tinggi (jeda) → C tembus high A
+        for i in range(0, len(df) - 2):
+            high_a = df['high'].iloc[i]
+            low_a  = df['low'].iloc[i]
+            # B = candle i+1, tidak boleh melewati high A (jeda valid)
+            if df['high'].iloc[i+1] < high_a:
+                # Cari C: candle setelah B yang tembus high A
+                for j in range(i + 2, len(df)):
+                    if df['high'].iloc[j] > high_a:
                         swept_list.append({
-                            'val'      : ref_low,
-                            'idx'      : i - 1,
+                            'val'      : high_a,  # level high IDM yang diambil
+                            'low_a'    : low_a,   # low A untuk referensi BOS asli
+                            'idx'      : i,
                             'swept_idx': j,
-                            'ts'       : df['ts'].iloc[i-1]
+                            'ts'       : df['ts'].iloc[i]
                         })
+                        break
+                    if df['high'].iloc[j] >= high_a:
                         break
 
     return swept_list
@@ -184,16 +205,24 @@ def place_precision_limit(symbol, side, entry, sl, tp):
         balance  = float(res_bal['result']['list'][0]['totalEquity'])
         risk_usd = balance * 0.01
         dist     = abs(entry - sl)
-        if dist == 0: return False
+        if dist == 0:
+            print(f"⚠️ {symbol}: dist entry-SL = 0, skip.")
+            return False
         qty = round(risk_usd / dist, 2)
+        print(f"   Balance: {balance:.2f} | Risk: {risk_usd:.2f} | Dist: {dist} | Qty: {qty}")
         res = session.place_order(
             category=CATEGORY, symbol=symbol, side=side,
             orderType="Limit", qty=str(qty), price=str(entry),
             stopLoss=str(sl), takeProfit=str(tp),
             timeInForce="GTC"
         )
-        return res['retCode'] == 0
-    except:
+        if res['retCode'] == 0:
+            return True
+        else:
+            print(f"⚠️ {symbol}: Order ditolak → {res.get('retMsg', '')} (code: {res['retCode']})")
+            return False
+    except Exception as e:
+        print(f"⚠️ {symbol}: place_order exception → {e}")
         return False
 
 
@@ -374,7 +403,7 @@ def replay_h1(coin, df_h1):
 
 def reconstruct_state():
     """Jalankan replay untuk semua coin saat startup."""
-    
+    print("🔍 Reconstruct state dari data H1...")
     for coin in SYMBOLS:
         try:
             time.sleep(0.3)
@@ -384,12 +413,13 @@ def reconstruct_state():
             state = replay_h1(coin, df_h1)
             if state:
                 pending[coin] = state
-                
+                print(f"✅ {coin}: State restored → {state['phase']}")
             else:
                 print(f"   {coin}: Tidak ada setup aktif.")
         except Exception as e:
             print(f"⚠️ Replay {coin}: {e}")
-    
+    print(f"🔍 Reconstruct selesai. {len(pending)} coin dalam monitoring.\n")
+
 # ============================================================
 # CORE LOOP
 # ============================================================
@@ -412,7 +442,7 @@ def run_bot():
             try:
                 time.sleep(0.5)
 
-                df_h1_live = get_data(coin, "60", limit=100)
+                df_h1_live = get_data(coin, "60", limit=150)
                 if df_h1_live is None: continue
 
                 sh_h1, sl_h1 = find_swings(df_h1_live, left=8, right=8)
@@ -421,7 +451,8 @@ def run_bot():
                 curr_h1   = df_h1_live.iloc[-1]
                 closed_h1 = df_h1_live.iloc[-2]
 
-                
+                print(f"\n📊 {coin} | H:{sh_h1[-1]['val']} C:{curr_h1['close']} L:{sl_h1[-1]['val']}")
+
                 # ── PROSES SETUP PENDING ─────────────────────────────────
                 if coin in pending:
                     setup    = pending[coin]
@@ -473,18 +504,22 @@ def run_bot():
                     closed_m5 = df_m5.iloc[-2] if len(df_m5) >= 2 else curr_m5
 
                     # PHASE 2 — TUNGGU BOS M5
+                    # Short (H1 Bullish) → tunggu BOS BEARISH M5
+                    # Long  (H1 Bearish) → tunggu BOS BULLISH M5
                     if setup['phase'] == "WAIT_M5_BOS":
                         sh_m5, sl_m5 = find_swings(df_m5, left=3, right=3)
                         if stype == "Short":
-                            if sh_m5 and curr_m5['close'] > sh_m5[-1]['val']:
-                                print(f"📈 {coin}: BOS Bullish M5. Tunggu IDM.")
-                                pending[coin]['phase']       = "WAIT_IDM_SWEPT"
-                                pending[coin]['m5_bos_high'] = sh_m5[-1]['val']
-                        else:
+                            # BOS Bearish M5 = close di bawah swing low terakhir M5
                             if sl_m5 and curr_m5['close'] < sl_m5[-1]['val']:
                                 print(f"📉 {coin}: BOS Bearish M5. Tunggu IDM.")
                                 pending[coin]['phase']      = "WAIT_IDM_SWEPT"
                                 pending[coin]['m5_bos_low'] = sl_m5[-1]['val']
+                        else:
+                            # BOS Bullish M5 = close di atas swing high terakhir M5
+                            if sh_m5 and curr_m5['close'] > sh_m5[-1]['val']:
+                                print(f"📈 {coin}: BOS Bullish M5. Tunggu IDM.")
+                                pending[coin]['phase']       = "WAIT_IDM_SWEPT"
+                                pending[coin]['m5_bos_high'] = sh_m5[-1]['val']
                         if stype == "Short" and curr_m5['close'] <= setup['tp']:
                             print(f"🗑️ {coin}: TP kena tanpa BOS M5."); del pending[coin]
                         elif stype == "Long" and curr_m5['close'] >= setup['tp']:
@@ -502,69 +537,67 @@ def run_bot():
                         continue
 
                     # PHASE 4 — TUNGGU MSS M5
+                    # Short (H1 Bullish) → MSS = break ATAS (bullish) patahkan BOS bearish M5
+                    # Long  (H1 Bearish) → MSS = break BAWAH (bearish) patahkan BOS bullish M5
                     if setup['phase'] == "WAIT_MSS":
                         sh_m5_mss, sl_m5_mss = find_swings(df_m5, left=3, right=3)
                         mss_confirmed = False
                         wick_detected = False
                         sl_order      = None
 
-                        if stype == "Short" and sl_m5_mss:
-                            struct_val = sl_m5_mss[-1]['val']
-                            if closed_m5['close'] < struct_val:
-                                # Body langsung break → MSS confirmed
-                                mss_confirmed = True
-                                sl_order      = closed_m5['high']
-                                print(f"🔻 {coin}: MSS Short body break @ {closed_m5['close']}")
-                            elif closed_m5['low'] < struct_val and closed_m5['close'] >= struct_val:
-                                # Hanya wick yang menembus, body masih di atas → simpan state
-                                wick_detected = True
-                                pending[coin]['mss_wick_ts']  = closed_m5['ts']
-                                pending[coin]['mss_struct_val'] = struct_val
-                                pending[coin]['mss_sl_candidate'] = closed_m5['high']
-                                print(f"👀 {coin}: MSS Short wick detected @ {closed_m5['low']}. Tunggu konfirmasi body.")
-
-                        elif stype == "Long" and sh_m5_mss:
+                        if stype == "Short" and sh_m5_mss:
+                            # MSS Short = close di ATAS swing high M5 (patahkan BOS bearish)
                             struct_val = sh_m5_mss[-1]['val']
                             if closed_m5['close'] > struct_val:
                                 mss_confirmed = True
-                                sl_order      = closed_m5['low']
-                                print(f"🔺 {coin}: MSS Long body break @ {closed_m5['close']}")
+                                sl_order      = closed_m5['low']  # SL di low candle MSS
+                                print(f"🔺 {coin}: MSS Short (bullish break) @ {closed_m5['close']}")
                             elif closed_m5['high'] > struct_val and closed_m5['close'] <= struct_val:
+                                # Wick tembus ke atas tapi close masih di bawah
                                 wick_detected = True
-                                pending[coin]['mss_wick_ts']    = closed_m5['ts']
-                                pending[coin]['mss_struct_val'] = struct_val
+                                pending[coin]['mss_wick_ts']      = closed_m5['ts']
+                                pending[coin]['mss_struct_val']   = struct_val
                                 pending[coin]['mss_sl_candidate'] = closed_m5['low']
-                                print(f"👀 {coin}: MSS Long wick detected @ {closed_m5['high']}. Tunggu konfirmasi body.")
+                                print(f"👀 {coin}: MSS Short wick detected @ {closed_m5['high']}. Tunggu body.")
 
-                        # Cek apakah sebelumnya sudah ada wick yang menunggu konfirmasi
+                        elif stype == "Long" and sl_m5_mss:
+                            # MSS Long = close di BAWAH swing low M5 (patahkan BOS bullish)
+                            struct_val = sl_m5_mss[-1]['val']
+                            if closed_m5['close'] < struct_val:
+                                mss_confirmed = True
+                                sl_order      = closed_m5['high']  # SL di high candle MSS
+                                print(f"🔻 {coin}: MSS Long (bearish break) @ {closed_m5['close']}")
+                            elif closed_m5['low'] < struct_val and closed_m5['close'] >= struct_val:
+                                wick_detected = True
+                                pending[coin]['mss_wick_ts']      = closed_m5['ts']
+                                pending[coin]['mss_struct_val']   = struct_val
+                                pending[coin]['mss_sl_candidate'] = closed_m5['high']
+                                print(f"👀 {coin}: MSS Long wick detected @ {closed_m5['low']}. Tunggu body.")
+
+                        # Cek wick sebelumnya yang menunggu konfirmasi body
                         if not mss_confirmed and not wick_detected and setup.get('mss_wick_ts'):
-                            struct_val     = setup['mss_struct_val']
-                            sl_candidate   = setup['mss_sl_candidate']
+                            struct_val   = setup['mss_struct_val']
+                            sl_candidate = setup['mss_sl_candidate']
 
                             if stype == "Short":
-                                if closed_m5['close'] < struct_val and closed_m5['ts'] > setup['mss_wick_ts']:
-                                    # Candle setelah wick akhirnya break body → MSS confirmed
-                                    mss_confirmed = True
-                                    sl_order      = sl_candidate
-                                    print(f"🔻 {coin}: MSS Short confirmed (body setelah wick) @ {closed_m5['close']}")
-                                elif closed_m5['close'] > struct_val and closed_m5['ts'] > setup['mss_wick_ts']:
-                                    # Setelah wick malah lanjut naik → MSS gagal, buyer lemah
-                                    print(f"❌ {coin}: Setelah wick MSS malah lanjut naik. Reset IDM.")
-                                    pending[coin]['mss_wick_ts']    = None
-                                    pending[coin]['mss_struct_val'] = None
-                                    pending[coin]['mss_sl_candidate'] = None
-                                    pending[coin]['phase'] = "WAIT_IDM_SWEPT"
-                                    continue
-                            else:
                                 if closed_m5['close'] > struct_val and closed_m5['ts'] > setup['mss_wick_ts']:
                                     mss_confirmed = True
                                     sl_order      = sl_candidate
-                                    print(f"🔺 {coin}: MSS Long confirmed (body setelah wick) @ {closed_m5['close']}")
+                                    print(f"🔺 {coin}: MSS Short confirmed (body setelah wick) @ {closed_m5['close']}")
                                 elif closed_m5['close'] < struct_val and closed_m5['ts'] > setup['mss_wick_ts']:
+                                    # Setelah wick malah lanjut turun → MSS gagal
                                     print(f"❌ {coin}: Setelah wick MSS malah lanjut turun. Reset IDM.")
-                                    pending[coin]['mss_wick_ts']    = None
-                                    pending[coin]['mss_struct_val'] = None
-                                    pending[coin]['mss_sl_candidate'] = None
+                                    pending[coin]['mss_wick_ts'] = pending[coin]['mss_struct_val'] = pending[coin]['mss_sl_candidate'] = None
+                                    pending[coin]['phase'] = "WAIT_IDM_SWEPT"
+                                    continue
+                            else:
+                                if closed_m5['close'] < struct_val and closed_m5['ts'] > setup['mss_wick_ts']:
+                                    mss_confirmed = True
+                                    sl_order      = sl_candidate
+                                    print(f"🔻 {coin}: MSS Long confirmed (body setelah wick) @ {closed_m5['close']}")
+                                elif closed_m5['close'] > struct_val and closed_m5['ts'] > setup['mss_wick_ts']:
+                                    print(f"❌ {coin}: Setelah wick MSS malah lanjut naik. Reset IDM.")
+                                    pending[coin]['mss_wick_ts'] = pending[coin]['mss_struct_val'] = pending[coin]['mss_sl_candidate'] = None
                                     pending[coin]['phase'] = "WAIT_IDM_SWEPT"
                                     continue
 
@@ -630,7 +663,6 @@ def run_bot():
                     'mss_wick_ts': None, 'mss_struct_val': None,
                     'mss_sl_candidate': None,
                 }
-                print(f"\n📊 {coin} | H:{sh_h1[-1]['val']} C:{curr_h1['close']} L:{sl_h1[-1]['val']}")
                 print(f"🎯 {coin}: BOS {stype} | {len(gaps)} FVG | TP: {tp_val}")
                 for i, g in enumerate(gaps):
                     print(f"   FVG {i+1}: {g['bottom']} – {g['top']}")
