@@ -88,63 +88,65 @@ def find_swings(df, left=2, right=2):
 
 def find_idm_swept(df, setup_type):
     """
-    IDM = BOS single move, pola A→B→C:
-      A = candle bikin high/low
-      B = minimal 1 candle jeda yang TIDAK melewati high/low A
-      C = candle yang melewati high/low A (IDM diambil)
+    IDM = BOS single move, pola A → [B..I] → J:
+      A        = candle yang bikin high/low
+      B sampai I = berapapun candle konsolidasi, TIDAK ADA yang melewati high/low A
+      J        = candle pertama yang melewati high/low A (IDM diambil)
 
-    H1 BOS Bullish = Short setup → cari IDM BEARISH di M5
-      (single move turun: A bikin low, B tidak lebih rendah, C tembus low A)
-      Low A = level IDM, High A = batas atas IDM
+    H1 BOS Bullish = Short setup → IDM BEARISH
+      A bikin low, B..I tidak ada yang lebih rendah dari low A, J tembus low A
 
-    H1 BOS Bearish = Long setup → cari IDM BULLISH di M5
-      (single move naik: A bikin high, B tidak lebih tinggi, C tembus high A)
-      High A = level IDM, Low A = batas bawah IDM
+    H1 BOS Bearish = Long setup → IDM BULLISH
+      A bikin high, B..I tidak ada yang lebih tinggi dari high A, J tembus high A
     """
     swept_list = []
 
     if setup_type == "Short":
-        # Cari IDM bearish: A bikin low → B tidak lebih rendah (jeda) → C tembus low A
         for i in range(0, len(df) - 2):
             low_a  = df['low'].iloc[i]
             high_a = df['high'].iloc[i]
-            # B = candle i+1, tidak boleh melewati low A (jeda valid)
-            if df['low'].iloc[i+1] > low_a:
-                # Cari C: candle setelah B yang tembus low A
-                for j in range(i + 2, len(df)):
-                    if df['low'].iloc[j] < low_a:
+
+            # Scan candle setelah A: cari konsolidasi (tidak melewati low A)
+            # lalu temukan J yang melewati low A
+            valid_consolidation = False
+            for j in range(i + 1, len(df)):
+                if df['low'].iloc[j] >= low_a:
+                    # Candle ini masih konsolidasi (tidak melewati low A)
+                    valid_consolidation = True
+                else:
+                    # Candle j melewati low A
+                    if valid_consolidation:
+                        # Ada minimal 1 candle konsolidasi sebelumnya → IDM valid
                         swept_list.append({
-                            'val'      : low_a,   # level low IDM yang diambil
-                            'high_a'   : high_a,  # high A untuk referensi BOS asli
+                            'val'      : low_a,
+                            'high_a'   : high_a,
                             'idx'      : i,
                             'swept_idx': j,
                             'ts'       : df['ts'].iloc[i]
                         })
-                        break
-                    # Kalau sebelum C ada candle yang lebih rendah dari low A, IDM tidak valid
-                    if df['low'].iloc[j] <= low_a:
-                        break
+                    break  # Stop, sudah ketemu J (atau langsung tembus tanpa konsolidasi)
 
     else:  # Long setup
-        # Cari IDM bullish: A bikin high → B tidak lebih tinggi (jeda) → C tembus high A
         for i in range(0, len(df) - 2):
             high_a = df['high'].iloc[i]
             low_a  = df['low'].iloc[i]
-            # B = candle i+1, tidak boleh melewati high A (jeda valid)
-            if df['high'].iloc[i+1] < high_a:
-                # Cari C: candle setelah B yang tembus high A
-                for j in range(i + 2, len(df)):
-                    if df['high'].iloc[j] > high_a:
+
+            valid_consolidation = False
+            for j in range(i + 1, len(df)):
+                if df['high'].iloc[j] <= high_a:
+                    # Candle ini masih konsolidasi (tidak melewati high A)
+                    valid_consolidation = True
+                else:
+                    # Candle j melewati high A
+                    if valid_consolidation:
                         swept_list.append({
-                            'val'      : high_a,  # level high IDM yang diambil
-                            'low_a'    : low_a,   # low A untuk referensi BOS asli
+                            'val'      : high_a,
+                            'low_a'    : low_a,
                             'idx'      : i,
                             'swept_idx': j,
                             'ts'       : df['ts'].iloc[i]
                         })
-                        break
-                    if df['high'].iloc[j] >= high_a:
-                        break
+                    break
 
     return swept_list
 
@@ -309,7 +311,7 @@ def replay_h1(coin, df_h1):
 
     Return: dict state pending, atau None kalau tidak ada setup aktif.
     """
-    sh_h1, sl_h1 = find_swings(df_h1, left=8, right=8)
+    sh_h1, sl_h1 = find_swings(df_h1, left=25, right=25)
     if not sh_h1 or not sl_h1:
         return None
 
@@ -397,7 +399,7 @@ def replay_h1(coin, df_h1):
     state['phase']        = phase
     state['fvg_touch_ts'] = fvg_touch_ts
 
-    print(f"🔄 {coin}: Replay selesai → Phase: {phase} | FVG aktif: {fvg_idx+1}/{len(gaps)}")
+    
     return state
 
 
@@ -413,6 +415,7 @@ def reconstruct_state():
             state = replay_h1(coin, df_h1)
             if state:
                 pending[coin] = state
+                
             
         except Exception as e:
             print(f"⚠️ Replay {coin}: {e}")
@@ -423,7 +426,9 @@ def reconstruct_state():
 # ============================================================
 
 def run_bot():
-    print("🚀 SNIPER V3 | SMC FULL LOGIC | ACTIVE")
+    print(f"\n====================================")
+    print(f"\n === SMART MONEY CONCEPT VIRTUAL === ")
+    print(f"\n====================================")
     if not test_connection():
         print("⛔ Bot berhenti karena tidak bisa konek ke Bybit.")
         return
@@ -443,13 +448,14 @@ def run_bot():
                 df_h1_live = get_data(coin, "60", limit=150)
                 if df_h1_live is None: continue
 
-                sh_h1, sl_h1 = find_swings(df_h1_live, left=8, right=8)
+                sh_h1, sl_h1 = find_swings(df_h1_live, left=25, right=25)
                 if not sh_h1 or not sl_h1: continue
 
                 curr_h1   = df_h1_live.iloc[-1]
                 closed_h1 = df_h1_live.iloc[-2]
 
                 
+
                 # ── PROSES SETUP PENDING ─────────────────────────────────
                 if coin in pending:
                     setup    = pending[coin]
@@ -660,9 +666,8 @@ def run_bot():
                     'mss_wick_ts': None, 'mss_struct_val': None,
                     'mss_sl_candidate': None,
                 }
-                print(f"🎯 {coin}: BOS {stype} | {len(gaps)} FVG | TP: {tp_val}")
                 print(f"\n📊 {coin} | H:{sh_h1[-1]['val']} C:{curr_h1['close']} L:{sl_h1[-1]['val']}")
-        
+                print(f"🎯 {coin}: BOS {stype} | {len(gaps)} FVG | TP: {tp_val}")
                 for i, g in enumerate(gaps):
                     print(f"   FVG {i+1}: {g['bottom']} – {g['top']}")
 
