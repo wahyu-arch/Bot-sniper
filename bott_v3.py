@@ -280,7 +280,7 @@ def replay_h1(coin, df_h1):
 
     Return: dict state pending, atau None kalau tidak ada setup aktif.
     """
-    sh_h1, sl_h1 = find_swings(df_h1, left=25, right=25)
+    sh_h1, sl_h1 = find_swings(df_h1, left=8, right=8)
     if not sh_h1 or not sl_h1:
         return None
 
@@ -374,7 +374,7 @@ def replay_h1(coin, df_h1):
 
 def reconstruct_state():
     """Jalankan replay untuk semua coin saat startup."""
-    print("🔍 Reconstruct state dari data H1...")
+    
     for coin in SYMBOLS:
         try:
             time.sleep(0.3)
@@ -384,13 +384,12 @@ def reconstruct_state():
             state = replay_h1(coin, df_h1)
             if state:
                 pending[coin] = state
-                print(f"✅ {coin}: State restored → {state['phase']}")
+                
             else:
                 print(f"   {coin}: Tidak ada setup aktif.")
         except Exception as e:
             print(f"⚠️ Replay {coin}: {e}")
-    print(f"🔍 Reconstruct selesai. {len(pending)} coin dalam monitoring.\n")
-
+    
 # ============================================================
 # CORE LOOP
 # ============================================================
@@ -413,10 +412,10 @@ def run_bot():
             try:
                 time.sleep(0.5)
 
-                df_h1_live = get_data(coin, "60", limit=150)
+                df_h1_live = get_data(coin, "60", limit=100)
                 if df_h1_live is None: continue
 
-                sh_h1, sl_h1 = find_swings(df_h1_live, left=25, right=25)
+                sh_h1, sl_h1 = find_swings(df_h1_live, left=8, right=8)
                 if not sh_h1 or not sl_h1: continue
 
                 curr_h1   = df_h1_live.iloc[-1]
