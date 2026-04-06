@@ -35,7 +35,7 @@ def test_connection():
         return False
 
 SYMBOLS = [
-    'XVGUSDT', 'BELUSDT', 'TAOUSDT', '1000BONKUSDT', 'BTCUSDT', 'BERAUSDT',
+    'XVGUSDT', 'BELUSDT', 'TAOUSDT', '1000BONKUSDT', 'PLUMEUSDT', 'BERAUSDT',
     'APTUSDT', 'DASHUSDT', 'DOGEUSDT', 'JUPUSDT', 'USUALUSDT',
     'UNIUSDT', 'HANAUSDT', 'FARTCOINUSDT', '1000PEPEUSDT',
 ]
@@ -267,6 +267,130 @@ def h1_trend_broken(curr_h1, setup, sh_h1, sl_h1):
     return False
 
 
+
+# ============================================================
+# REPLAY H1 — reconstruct state saat startup/restart
+# ============================================================
+
+def replay_h1(coin, df_h1):
+    """
+    Baca candle H1 dari kiri ke kanan sejak BOS terbentuk.
+    Tujuannya: tahu phase mana yang benar sekarang tanpa perlu
+    menunggu candle baru — seperti membaca chart manual.
+
+    Return: dict state pending, atau None kalau tidak ada setup aktif.
+    """
+    sh_h1, sl_h1 = find_swings(df_h1, left=25, right=25)
+    if not sh_h1 or not sl_h1:
+        return None
+
+    # Cari BOS terakhir yang valid
+    last_close = df_h1.iloc[-2]['close']  # candle terakhir yang sudah close
+    is_short   = last_close < sl_h1[-1]['val']
+    is_long    = last_close > sh_h1[-1]['val']
+
+    if not (is_short or is_long):
+        return None
+
+    stype   = "Short" if is_short else "Long"
+    ref_idx = sh_h1[-1]['idx'] if is_short else sl_h1[-1]['idx']
+
+    # Ambil semua FVG internal BOS (dari snapshot saat BOS)
+    df_snap = df_h1.copy()
+    gaps    = get_internal_gaps(df_snap, stype, ref_idx)
+    if not gaps:
+        return None
+
+    since_bos = df_snap.iloc[ref_idx:]
+    tp_val    = since_bos['low'].min() if is_short else since_bos['high'].max()
+    bos_ts    = df_snap['ts'].iloc[ref_idx]
+
+    # State awal
+    state = {
+        'type': stype, 'df_h1': df_snap,
+        'fvg_list': gaps, 'fvg_idx': 0,
+        'tp': tp_val, 'bos_ts': bos_ts,
+        'phase': "WAIT_FVG_TOUCH", 'fvg_touch_ts': 0,
+        'df_m5_frozen': None, 'm5_bos_high': None,
+        'm5_bos_low': None, 'm5_idm_val': None,
+        'mss_wick_ts': None, 'mss_struct_val': None,
+        'mss_sl_candidate': None,
+    }
+
+    # ── REPLAY candle H1 dari kiri ke kanan sejak BOS ──
+    # Gunakan candle yang sudah close saja (index ref_idx+1 sampai -2)
+    candles_after_bos = df_h1.iloc[ref_idx + 1 : -1]  # exclude candle live terakhir
+
+    fvg_idx        = 0
+    fvg_touch_ts   = 0
+    phase          = "WAIT_FVG_TOUCH"
+
+    for _, candle in candles_after_bos.iterrows():
+        if fvg_idx >= len(gaps):
+            # Semua FVG habis → setup invalid
+            return None
+
+        active_fvg = gaps[fvg_idx]
+
+        if phase == "WAIT_FVG_TOUCH":
+            # Cek apakah TP sudah kena sebelum FVG → setup batal
+            if stype == "Short" and candle['close'] <= tp_val:
+                return None
+            if stype == "Long"  and candle['close'] >= tp_val:
+                return None
+
+            if not price_in_fvg(candle['high'], candle['low'], active_fvg):
+                continue
+
+            # FVG disentuh — cek tipe sentuhan
+            if body_breaks_fvg(candle, active_fvg, stype):
+                # Body masuk → FVG gagal, coba berikutnya
+                fvg_idx += 1
+                continue
+
+            if wick_only_touch(candle, active_fvg, stype):
+                # Wick valid → masuk M5
+                phase        = "WAIT_M5_BOS"
+                fvg_touch_ts = candle['ts']
+                continue
+
+        elif phase == "WAIT_M5_BOS":
+            # Di M5 phase — cek apakah TP sudah kena
+            if stype == "Short" and candle['close'] <= tp_val:
+                return None
+            if stype == "Long"  and candle['close'] >= tp_val:
+                return None
+            # Tetap di phase ini, nanti M5 yang putuskan
+            continue
+
+    # Update state dengan hasil replay
+    state['fvg_idx']      = fvg_idx
+    state['phase']        = phase
+    state['fvg_touch_ts'] = fvg_touch_ts
+
+    print(f"🔄 {coin}: Replay selesai → Phase: {phase} | FVG aktif: {fvg_idx+1}/{len(gaps)}")
+    return state
+
+
+def reconstruct_state():
+    """Jalankan replay untuk semua coin saat startup."""
+    print("🔍 Reconstruct state dari data H1...")
+    for coin in SYMBOLS:
+        try:
+            time.sleep(0.3)
+            df_h1 = get_data(coin, "60", limit=150)
+            if df_h1 is None:
+                continue
+            state = replay_h1(coin, df_h1)
+            if state:
+                pending[coin] = state
+                print(f"✅ {coin}: State restored → {state['phase']}")
+            else:
+                print(f"   {coin}: Tidak ada setup aktif.")
+        except Exception as e:
+            print(f"⚠️ Replay {coin}: {e}")
+    print(f"🔍 Reconstruct selesai. {len(pending)} coin dalam monitoring.\n")
+
 # ============================================================
 # CORE LOOP
 # ============================================================
@@ -276,6 +400,7 @@ def run_bot():
     if not test_connection():
         print("⛔ Bot berhenti karena tidak bisa konek ke Bybit.")
         return
+    reconstruct_state()
     while True:
 
         for coin in list(active_positions.keys()):
@@ -297,7 +422,8 @@ def run_bot():
                 curr_h1   = df_h1_live.iloc[-1]
                 closed_h1 = df_h1_live.iloc[-2]
 
-                
+                print(f"\n📊 {coin} | H:{sh_h1[-1]['val']} C:{curr_h1['close']} L:{sl_h1[-1]['val']}")
+
                 # ── PROSES SETUP PENDING ─────────────────────────────────
                 if coin in pending:
                     setup    = pending[coin]
@@ -506,7 +632,6 @@ def run_bot():
                     'mss_wick_ts': None, 'mss_struct_val': None,
                     'mss_sl_candidate': None,
                 }
-                print(f"\n📊 {coin} | H:{sh_h1[-1]['val']} C:{curr_h1['close']} L:{sl_h1[-1]['val']}")
                 print(f"🎯 {coin}: BOS {stype} | {len(gaps)} FVG | TP: {tp_val}")
                 for i, g in enumerate(gaps):
                     print(f"   FVG {i+1}: {g['bottom']} – {g['top']}")
