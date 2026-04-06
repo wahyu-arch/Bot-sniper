@@ -35,7 +35,7 @@ def test_connection():
         return False
 
 SYMBOLS = [
-    'XVGUSDT', 'BELUSDT', 'TAOUSDT', '1000BONKUSDT', 'PLUMEUSDT', 'BERAUSDT',
+    'XVGUSDT', 'BELUSDT', 'TAOUSDT', '1000BONKUSDT', 'BTCUSDT', 'BERAUSDT',
     'APTUSDT', 'DASHUSDT', 'DOGEUSDT', 'JUPUSDT', 'USUALUSDT',
     'UNIUSDT', 'HANAUSDT', 'FARTCOINUSDT', '1000PEPEUSDT',
 ]
@@ -311,7 +311,7 @@ def replay_h1(coin, df_h1):
 
     Return: dict state pending, atau None kalau tidak ada setup aktif.
     """
-    sh_h1, sl_h1 = find_swings(df_h1, left=25, right=25)
+    sh_h1, sl_h1 = find_swings(df_h1, left=8, right=8)
     if not sh_h1 or not sl_h1:
         return None
 
@@ -427,8 +427,8 @@ def reconstruct_state():
 
 def run_bot():
     print(f"\n====================================")
-    print(f"\n === SMART MONEY CONCEPT VIRTUAL === ")
-    print(f"\n====================================")
+    print(f" === SMART MONEY CONCEPT VIRTUAL === ")
+    print(f"====================================")
     if not test_connection():
         print("⛔ Bot berhenti karena tidak bisa konek ke Bybit.")
         return
@@ -448,7 +448,7 @@ def run_bot():
                 df_h1_live = get_data(coin, "60", limit=150)
                 if df_h1_live is None: continue
 
-                sh_h1, sl_h1 = find_swings(df_h1_live, left=25, right=25)
+                sh_h1, sl_h1 = find_swings(df_h1_live, left=8, right=8)
                 if not sh_h1 or not sl_h1: continue
 
                 curr_h1   = df_h1_live.iloc[-1]
