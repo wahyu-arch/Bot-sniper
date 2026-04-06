@@ -413,9 +413,7 @@ def reconstruct_state():
             state = replay_h1(coin, df_h1)
             if state:
                 pending[coin] = state
-                
             else:
-                
         except Exception as e:
             print(f"⚠️ Replay {coin}: {e}")
     
