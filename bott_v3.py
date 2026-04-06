@@ -422,8 +422,7 @@ def run_bot():
                 curr_h1   = df_h1_live.iloc[-1]
                 closed_h1 = df_h1_live.iloc[-2]
 
-                print(f"\n📊 {coin} | H:{sh_h1[-1]['val']} C:{curr_h1['close']} L:{sl_h1[-1]['val']}")
-
+                
                 # ── PROSES SETUP PENDING ─────────────────────────────────
                 if coin in pending:
                     setup    = pending[coin]
@@ -632,6 +631,7 @@ def run_bot():
                     'mss_wick_ts': None, 'mss_struct_val': None,
                     'mss_sl_candidate': None,
                 }
+                print(f"\n📊 {coin} | H:{sh_h1[-1]['val']} C:{curr_h1['close']} L:{sl_h1[-1]['val']}")
                 print(f"🎯 {coin}: BOS {stype} | {len(gaps)} FVG | TP: {tp_val}")
                 for i, g in enumerate(gaps):
                     print(f"   FVG {i+1}: {g['bottom']} – {g['top']}")
