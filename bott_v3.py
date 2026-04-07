@@ -35,7 +35,7 @@ def test_connection():
         return False
 
 SYMBOLS = [
-    'XVGUSDT', 'BELUSDT', 'TAOUSDT', '1000BONKUSDT', 'BTCUSDT', 'BERAUSDT',
+    'XVGUSDT', 'BELUSDT', 'TAOUSDT', '1000BONKUSDT', 'PLUMEUSDT', 'BERAUSDT',
     'APTUSDT', 'DASHUSDT', 'DOGEUSDT', 'JUPUSDT', 'USUALUSDT',
     'UNIUSDT', 'HANAUSDT', 'FARTCOINUSDT', '1000PEPEUSDT',
 ]
@@ -380,12 +380,12 @@ def replay_h1(coin, df_h1):
                 continue
 
             if wick_only_touch(candle, active_fvg, stype):
-                # Wick valid → masuk M5
-                phase        = "WAIT_M5_BOS"
+                # Wick valid → langsung ke WAIT_IDM_SWEPT
+                phase        = "WAIT_IDM_SWEPT"
                 fvg_touch_ts = candle['ts']
                 continue
 
-        elif phase == "WAIT_M5_BOS":
+        elif phase == "WAIT_IDM_SWEPT":
             # Di M5 phase — cek apakah TP sudah kena
             if stype == "Short" and candle['close'] <= tp_val:
                 return None
@@ -399,13 +399,13 @@ def replay_h1(coin, df_h1):
     state['phase']        = phase
     state['fvg_touch_ts'] = fvg_touch_ts
 
-    
+    print(f"🔄 {coin}: Replay selesai → Phase: {phase} | FVG aktif: {fvg_idx+1}/{len(gaps)}")
     return state
 
 
 def reconstruct_state():
     """Jalankan replay untuk semua coin saat startup."""
-    
+    print("🔍 Reconstruct state dari data H1...")
     for coin in SYMBOLS:
         try:
             time.sleep(0.3)
@@ -415,20 +415,19 @@ def reconstruct_state():
             state = replay_h1(coin, df_h1)
             if state:
                 pending[coin] = state
-                
-            
+                print(f"✅ {coin}: State restored → {state['phase']}")
+            else:
+                print(f"   {coin}: Tidak ada setup aktif.")
         except Exception as e:
             print(f"⚠️ Replay {coin}: {e}")
-    
+    print(f"🔍 Reconstruct selesai. {len(pending)} coin dalam monitoring.\n")
 
 # ============================================================
 # CORE LOOP
 # ============================================================
 
 def run_bot():
-    print(f"\n====================================")
-    print(f" === SMART MONEY CONCEPT VIRTUAL === ")
-    print(f"====================================")
+    print("🚀 SNIPER V3 | SMC FULL LOGIC | ACTIVE")
     if not test_connection():
         print("⛔ Bot berhenti karena tidak bisa konek ke Bybit.")
         return
@@ -454,7 +453,7 @@ def run_bot():
                 curr_h1   = df_h1_live.iloc[-1]
                 closed_h1 = df_h1_live.iloc[-2]
 
-                
+                print(f"\n📊 {coin} | H:{sh_h1[-1]['val']} C:{curr_h1['close']} L:{sl_h1[-1]['val']}")
 
                 # ── PROSES SETUP PENDING ─────────────────────────────────
                 if coin in pending:
@@ -489,7 +488,9 @@ def run_bot():
 
                         if wick_only_touch(closed_h1, active_fvg, stype):
                             print(f"✅ {coin}: FVG {fvg_idx+1} valid (wick). Masuk M5.")
-                            pending[coin]['phase']        = "WAIT_M5_BOS"
+                            # Langsung ke WAIT_IDM_SWEPT — tidak ada phase BOS M5 terpisah
+                            # karena BOS hanya valid setelah IDM di-sweep
+                            pending[coin]['phase']        = "WAIT_IDM_SWEPT"
                             pending[coin]['fvg_touch_ts'] = closed_h1['ts']
                             pending[coin]['df_m5_frozen'] = None
                         continue
@@ -506,37 +507,24 @@ def run_bot():
                     curr_m5   = df_m5.iloc[-1]
                     closed_m5 = df_m5.iloc[-2] if len(df_m5) >= 2 else curr_m5
 
-                    # PHASE 2 — TUNGGU BOS M5
-                    # Short (H1 Bullish) → tunggu BOS BEARISH M5
-                    # Long  (H1 Bearish) → tunggu BOS BULLISH M5
-                    if setup['phase'] == "WAIT_M5_BOS":
-                        sh_m5, sl_m5 = find_swings(df_m5, left=3, right=3)
-                        if stype == "Short":
-                            # BOS Bearish M5 = close di bawah swing low terakhir M5
-                            if sl_m5 and curr_m5['close'] < sl_m5[-1]['val']:
-                                print(f"📉 {coin}: BOS Bearish M5. Tunggu IDM.")
-                                pending[coin]['phase']      = "WAIT_IDM_SWEPT"
-                                pending[coin]['m5_bos_low'] = sl_m5[-1]['val']
-                        else:
-                            # BOS Bullish M5 = close di atas swing high terakhir M5
-                            if sh_m5 and curr_m5['close'] > sh_m5[-1]['val']:
-                                print(f"📈 {coin}: BOS Bullish M5. Tunggu IDM.")
-                                pending[coin]['phase']       = "WAIT_IDM_SWEPT"
-                                pending[coin]['m5_bos_high'] = sh_m5[-1]['val']
-                        if stype == "Short" and curr_m5['close'] <= setup['tp']:
-                            print(f"🗑️ {coin}: TP kena tanpa BOS M5."); del pending[coin]
-                        elif stype == "Long" and curr_m5['close'] >= setup['tp']:
-                            print(f"🗑️ {coin}: TP kena tanpa BOS M5."); del pending[coin]
-                        continue
-
-                    # PHASE 3 — TUNGGU IDM DI-SWEPT
+                    # PHASE 2 — TUNGGU IDM DI-SWEPT
+                    # IDM harus di-sweep dulu sebelum BOS apapun bisa terjadi
+                    # Short (H1 Bullish) → IDM bearish (low di-sweep)
+                    # Long  (H1 Bearish) → IDM bullish (high di-sweep)
                     if setup['phase'] == "WAIT_IDM_SWEPT":
                         idm_list = find_idm_swept(df_m5, stype)
                         if idm_list:
                             latest_idm = idm_list[-1]
-                            pending[coin]['m5_idm_val'] = latest_idm['val']
+                            pending[coin]['m5_idm_val']     = latest_idm['val']
+                            pending[coin]['m5_idm_swept_ts'] = df_m5['ts'].iloc[latest_idm['swept_idx']]
                             print(f"💧 {coin}: IDM swept @ {latest_idm['val']}. Tunggu MSS.")
                             pending[coin]['phase'] = "WAIT_MSS"
+                        # Cek TP kena sebelum IDM
+                        if coin in pending:
+                            if stype == "Short" and curr_m5['close'] <= setup['tp']:
+                                print(f"🗑️ {coin}: TP kena tanpa IDM."); del pending[coin]
+                            elif stype == "Long" and curr_m5['close'] >= setup['tp']:
+                                print(f"🗑️ {coin}: TP kena tanpa IDM."); del pending[coin]
                         continue
 
                     # PHASE 4 — TUNGGU MSS M5
@@ -622,7 +610,8 @@ def run_bot():
                             pending[coin]['mss_wick_ts'] = None
                             continue
 
-                        entry_price = entry_fvg['bottom'] if stype == "Short" else entry_fvg['top']
+                        # Short (H1 Bullish) → entry top FVG | Long (H1 Bearish) → entry bottom FVG
+                        entry_price = entry_fvg['top'] if stype == "Short" else entry_fvg['bottom']
                         side_order  = "Sell" if stype == "Short" else "Buy"
 
                         print(f"🎯 {coin}: {side_order} @ {entry_price} | SL {sl_order} | TP {setup['tp']}")
@@ -661,12 +650,11 @@ def run_bot():
                     'fvg_list': gaps, 'fvg_idx': 0,
                     'tp': tp_val, 'bos_ts': df_h1_snap['ts'].iloc[ref_idx],
                     'phase': "WAIT_FVG_TOUCH", 'fvg_touch_ts': 0,
-                    'df_m5_frozen': None, 'm5_bos_high': None,
-                    'm5_bos_low': None, 'm5_idm_val': None,
+                    'df_m5_frozen': None,
+                    'm5_idm_val': None, 'm5_idm_swept_ts': None,
                     'mss_wick_ts': None, 'mss_struct_val': None,
                     'mss_sl_candidate': None,
                 }
-                print(f"\n📊 {coin} | H:{sh_h1[-1]['val']} C:{curr_h1['close']} L:{sl_h1[-1]['val']}")
                 print(f"🎯 {coin}: BOS {stype} | {len(gaps)} FVG | TP: {tp_val}")
                 for i, g in enumerate(gaps):
                     print(f"   FVG {i+1}: {g['bottom']} – {g['top']}")
