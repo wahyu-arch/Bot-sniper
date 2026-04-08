@@ -440,6 +440,7 @@ def replay_h1(coin, df_h1):
     state['phase']        = phase
     state['fvg_touch_ts'] = fvg_touch_ts
 
+    print(f"\n📊 {coin} | BOS {stype} | H:{sh_h1[-1]['val']} C:{curr_h1['close']} L:{sl_h1[-1]['val']}")
     print(f"🔄 {coin}: Replay → Phase:{phase} FVG:{fvg_idx+1}/{len(gaps)}")
     return state
 
