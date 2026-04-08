@@ -395,10 +395,12 @@ def replay_h1(coin, df_h1):
     tp_val    = since_bos['high'].max() if stype == "Long" else since_bos['low'].min()
     bos_ts    = df_snap['ts'].iloc[ref_idx]
 
+    swing_ts = sh_h1[-1]['ts'] if stype == "Long" else sl_h1[-1]['ts']
     state = {
         'type': stype, 'df_h1': df_snap,
         'fvg_list': gaps, 'fvg_idx': 0,
         'tp': tp_val, 'bos_ts': bos_ts,
+        'swing_ts': swing_ts,
         'phase': "WAIT_FVG_TOUCH", 'fvg_touch_ts': 0,
         'm5_freeze_high': None, 'm5_freeze_low': None, 'm5_freeze_ts': None,
         'idm_list': [], 'idm_touched_val': None,
@@ -538,12 +540,14 @@ def run_bot():
                         continue
 
                     # ── AMBIL DATA M5 ─────────────────────────────────
+                    # Anchor M5 dari swing H1 (high untuk Long, low untuk Short)
+                    # supaya tidak salah baca MSS dari data sebelum retrace
                     time.sleep(1)
                     df_m5_live = get_data(coin, "5", limit=200)
                     if df_m5_live is None: continue
 
-                    touch_ts = setup.get('fvg_touch_ts', setup['bos_ts'])
-                    df_m5    = df_m5_live[df_m5_live['ts'] >= touch_ts].reset_index(drop=True)
+                    swing_ts = setup.get('swing_ts', setup['bos_ts'])
+                    df_m5    = df_m5_live[df_m5_live['ts'] >= swing_ts].reset_index(drop=True)
                     if len(df_m5) < 5:
                         df_m5 = df_m5_live.tail(80).reset_index(drop=True)
 
@@ -556,12 +560,18 @@ def run_bot():
                     if setup['phase'] == "WAIT_IDM_TOUCH":
                         idm_list = find_idm(df_m5, stype)
                         if not idm_list:
+                            print(f"⏳ {coin}: Belum ada IDM ditemukan.")
                             # Cek TP kena tanpa IDM
                             if stype == "Long" and curr_m5['close'] >= setup['tp']:
                                 print(f"🗑️ {coin}: TP kena tanpa IDM."); del pending[coin]
                             elif stype == "Short" and curr_m5['close'] <= setup['tp']:
                                 print(f"🗑️ {coin}: TP kena tanpa IDM."); del pending[coin]
                             continue
+
+                        # Print semua IDM yang ditemukan
+                        idm_label = "high" if stype == "Long" else "low"
+                        idm_vals  = [idm[idm_label] for idm in idm_list]
+                        print(f"📍 {coin}: {len(idm_list)} IDM ditemukan → {idm_vals}")
 
                         pending[coin]['idm_list'] = idm_list
 
@@ -736,10 +746,15 @@ def run_bot():
                 since_bos = df_h1_snap.iloc[ref_idx:]
                 tp_val    = since_bos['high'].max() if stype == "Long" else since_bos['low'].min()
 
+                # swing_ts = ts swing high (Long) atau swing low (Short) di H1
+                # Ini dipakai sebagai anchor tetap untuk ambil data M5
+                swing_ts = sh_h1[-1]['ts'] if stype == "Long" else sl_h1[-1]['ts']
+
                 pending[coin] = {
                     'type': stype, 'df_h1': df_h1_snap,
                     'fvg_list': gaps, 'fvg_idx': 0,
                     'tp': tp_val, 'bos_ts': df_h1_snap['ts'].iloc[ref_idx],
+                    'swing_ts': swing_ts,
                     'phase': "WAIT_FVG_TOUCH", 'fvg_touch_ts': 0,
                     'm5_freeze_high': None, 'm5_freeze_low': None, 'm5_freeze_ts': None,
                     'idm_list': [], 'idm_touched_val': None,
