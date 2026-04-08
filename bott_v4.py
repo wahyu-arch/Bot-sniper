@@ -562,40 +562,31 @@ def run_bot():
                     closed_m5 = df_m5.iloc[-2] if len(df_m5) >= 2 else curr_m5
 
                     # ── PHASE 2: TUNGGU IDM TERSENTUH ────────────────
-                    # Cari semua IDM di M5, tunggu harga menyentuh
-                    # high IDM (Long) atau low IDM (Short)
+                    # Selalu fokus ke IDM TERBARU (paling kanan).
+                    # Kalau ada IDM baru terbentuk sebelum IDM lama disentuh,
+                    # IDM lama diabaikan otomatis karena kita ambil [-1].
                     if setup['phase'] == "WAIT_IDM_TOUCH":
                         idm_list = find_idm(df_m5, stype)
                         if not idm_list:
                             print(f"⏳ {coin}: Belum ada IDM ditemukan.")
-                            # Cek TP kena tanpa IDM
                             if stype == "Long" and curr_m5['close'] >= setup['tp']:
                                 print(f"🗑️ {coin}: TP kena tanpa IDM."); del pending[coin]
                             elif stype == "Short" and curr_m5['close'] <= setup['tp']:
                                 print(f"🗑️ {coin}: TP kena tanpa IDM."); del pending[coin]
                             continue
 
-                        # Print semua IDM yang ditemukan
-                        idm_label = "high" if stype == "Long" else "low"
-                        idm_vals  = [idm[idm_label] for idm in idm_list]
-                        print(f"📍 {coin}: {len(idm_list)} IDM ditemukan → {idm_vals}")
+                        # Ambil IDM terbaru saja
+                        latest_idm = idm_list[-1]
+                        idm_level  = latest_idm['high'] if stype == "Long" else latest_idm['low']
+                        print(f"📍 {coin}: IDM terbaru @ {idm_level} (dari {len(idm_list)} IDM)")
 
-                        pending[coin]['idm_list'] = idm_list
-
-                        # Cek apakah ada IDM yang sudah disentuh
-                        touched = find_latest_idm_touched(df_m5, idm_list, stype)
+                        # Cek apakah IDM terbaru sudah disentuh
+                        touched = find_latest_idm_touched(df_m5, [latest_idm], stype)
                         if touched:
-                            idm_level      = touched['high'] if stype == "Long" else touched['low']
                             df_m5_at_touch = df_m5[df_m5['ts'] <= touched['touch_ts']]
                             freeze_high    = df_m5_at_touch['high'].max()
                             freeze_low     = df_m5_at_touch['low'].min()
 
-                            # Long (H1 Bullish): IDM bearish disentuh
-                            #   → target BOS  = freeze_low  (break bawah = BOS bearish M5)
-                            #   → target MSS  = freeze_high (break atas  = MSS bullish)
-                            # Short (H1 Bearish): IDM bullish disentuh
-                            #   → target BOS  = freeze_high (break atas  = BOS bullish M5)
-                            #   → target MSS  = freeze_low  (break bawah = MSS bearish)
                             if stype == "Long":
                                 target_bos = freeze_low
                                 target_mss = freeze_high
@@ -647,14 +638,16 @@ def run_bot():
                                 break
 
                         if bos_broken:
-                            # BOS terbentuk → cari IDM baru dari BOS ini
-                            # Reset ke WAIT_IDM_TOUCH dengan timestamp BOS sebagai anchor baru
+                            # BOS M5 terbentuk → update anchor M5 ke swing dari BOS ini
+                            # Long:  BOS bearish M5 → anchor = swing HIGH sebelum break bawah
+                            # Short: BOS bullish M5 → anchor = swing LOW sebelum break atas
+                            # Gunakan ts candle BOS sebagai anchor baru untuk cari IDM
+                            pending[coin]['swing_ts']       = c['ts']
                             pending[coin]['phase']          = "WAIT_IDM_TOUCH"
                             pending[coin]['m5_freeze_high'] = None
                             pending[coin]['m5_freeze_low']  = None
                             pending[coin]['m5_freeze_ts']   = None
                             pending[coin]['idm_touched_val'] = None
-                            pending[coin]['fvg_touch_ts']   = c['ts']  # scan IDM dari candle BOS
                         else:
                             # Cek apakah TP kena (setup gagal)
                             if stype == "Long" and curr_m5['close'] >= setup['tp']:
@@ -690,11 +683,11 @@ def run_bot():
                                     # Malah break ke bawah → BOS baru, balik cari IDM
                                     reset_to_idm = True
                                     print(f"🔄 {coin}: Break bawah lagi. Cari IDM baru.")
+                                    pending[coin]['swing_ts']       = c['ts']
                                     pending[coin]['phase']          = "WAIT_IDM_TOUCH"
                                     pending[coin]['m5_freeze_high'] = None
                                     pending[coin]['m5_freeze_low']  = None
                                     pending[coin]['m5_freeze_ts']   = None
-                                    pending[coin]['fvg_touch_ts']   = c['ts']
                                     break
                             else:  # Short
                                 if c['close'] < freeze_low:
@@ -705,11 +698,11 @@ def run_bot():
                                     # Malah break ke atas → BOS baru, balik cari IDM
                                     reset_to_idm = True
                                     print(f"🔄 {coin}: Break atas lagi. Cari IDM baru.")
+                                    pending[coin]['swing_ts']       = c['ts']
                                     pending[coin]['phase']          = "WAIT_IDM_TOUCH"
                                     pending[coin]['m5_freeze_high'] = None
                                     pending[coin]['m5_freeze_low']  = None
                                     pending[coin]['m5_freeze_ts']   = None
-                                    pending[coin]['fvg_touch_ts']   = c['ts']
                                     break
 
                         if reset_to_idm or mss_candle is None:
