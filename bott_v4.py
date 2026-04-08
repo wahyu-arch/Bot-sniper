@@ -585,14 +585,33 @@ def run_bot():
                         # Cek apakah ada IDM yang sudah disentuh
                         touched = find_latest_idm_touched(df_m5, idm_list, stype)
                         if touched:
-                            print(f"💧 {coin}: IDM tersentuh @ {touched['high'] if stype == 'Long' else touched['low']}. Freeze M5.")
-                            pending[coin]['phase']          = "WAIT_BOS_BREAK"
-                            pending[coin]['idm_touched_val'] = touched['high'] if stype == "Long" else touched['low']
-                            # Freeze: simpan high/low M5 saat IDM tersentuh sebagai struktur
+                            idm_level      = touched['high'] if stype == "Long" else touched['low']
                             df_m5_at_touch = df_m5[df_m5['ts'] <= touched['touch_ts']]
-                            pending[coin]['m5_freeze_high'] = df_m5_at_touch['high'].max()
-                            pending[coin]['m5_freeze_low']  = df_m5_at_touch['low'].min()
-                            pending[coin]['m5_freeze_ts']   = touched['touch_ts']
+                            freeze_high    = df_m5_at_touch['high'].max()
+                            freeze_low     = df_m5_at_touch['low'].min()
+
+                            # Long (H1 Bullish): IDM bearish disentuh
+                            #   → target BOS  = freeze_low  (break bawah = BOS bearish M5)
+                            #   → target MSS  = freeze_high (break atas  = MSS bullish)
+                            # Short (H1 Bearish): IDM bullish disentuh
+                            #   → target BOS  = freeze_high (break atas  = BOS bullish M5)
+                            #   → target MSS  = freeze_low  (break bawah = MSS bearish)
+                            if stype == "Long":
+                                target_bos = freeze_low
+                                target_mss = freeze_high
+                            else:
+                                target_bos = freeze_high
+                                target_mss = freeze_low
+
+                            print(f"💧 {coin}: IDM tersentuh @ {idm_level}")
+                            print(f"   → Target BOS M5 : {target_bos} ({'break bawah' if stype == 'Long' else 'break atas'})")
+                            print(f"   → Target MSS    : {target_mss} ({'break atas' if stype == 'Long' else 'break bawah'})")
+
+                            pending[coin]['phase']           = "WAIT_BOS_BREAK"
+                            pending[coin]['idm_touched_val'] = idm_level
+                            pending[coin]['m5_freeze_high']  = freeze_high
+                            pending[coin]['m5_freeze_low']   = freeze_low
+                            pending[coin]['m5_freeze_ts']    = touched['touch_ts']
                         else:
                             if stype == "Long" and curr_m5['close'] >= setup['tp']:
                                 print(f"🗑️ {coin}: TP kena tanpa IDM touch."); del pending[coin]
