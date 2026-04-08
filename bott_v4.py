@@ -96,110 +96,129 @@ def find_swings(df, left=2, right=2):
 
 
 # ============================================================
-# FUNGSI IDM
+# FUNGSI IDM — REPLAY KIRI KE KANAN
 # ============================================================
 
-def find_idm(df, stype):
+def replay_m5(df, stype):
     """
-    IDM = BOS kecil single move yang sudah SELESAI terbentuk.
+    Replay candle M5 dari kiri ke kanan untuk cari state IDM terkini.
 
-    IDM Bearish (H1 Long):
-      1. Candle A bikin low dan close (candle turun)
-      2. Minimal 1 candle konsolidasi (tidak nembus low A)
-      3. Low A ditembus ke bawah → BOS kecil selesai
-      → Level IDM = HIGH candle A (yang harus disentuh harga nanti)
+    Untuk H1 Long (IDM bearish):
+      State machine per candle:
+      1. CARI_LOW   : cari candle yang bikin low baru (kandidat A)
+      2. KONSOLIDASI: setelah dapat low A, tunggu minimal 1 candle tidak tembus low A
+      3. BREAK      : low A ditembus → IDM selesai, level IDM = high A
+      4. TUNGGU_SENTUH: tunggu harga naik kembali menyentuh high A
+         → Kalau low baru terbentuk sebelum disentuh → IDM baru, reset ke step 1
+         → Kalau high A disentuh → IDM tersentuh, return result
 
-    IDM Bullish (H1 Short):
-      1. Candle A bikin high dan close (candle naik)
-      2. Minimal 1 candle konsolidasi (tidak nembus high A)
-      3. High A ditembus ke atas → BOS kecil selesai
-      → Level IDM = LOW candle A (yang harus disentuh harga nanti)
+    Untuk H1 Short (IDM bullish): sebaliknya.
 
-    IDM hanya valid jika BOS kecilnya sudah selesai (sudah ada candle yang nembus).
-    Kalau belum ada yang nembus = belum jadi IDM.
+    Return dict:
+      {'phase': 'WAIT_IDM'  | 'IDM_TOUCHED',
+       'idm_level': float,   -- high A (Long) atau low A (Short)
+       'freeze_high': float, -- high saat IDM disentuh (untuk freeze)
+       'freeze_low' : float, -- low saat IDM disentuh
+       'freeze_ts'  : int }
     """
-    idm_list = []
+    if len(df) < 3:
+        return {'phase': 'WAIT_IDM', 'idm_level': None}
 
-    if stype == "Long":
-        # IDM bearish: cari BOS kecil ke bawah yang sudah selesai
-        for i in range(0, len(df) - 2):
-            low_a  = df['low'].iloc[i]
-            high_a = df['high'].iloc[i]
+    # State machine
+    state          = 'CARI_EKSTREM'  # CARI_EKSTREM → KONSOLIDASI → BREAK → TUNGGU_SENTUH
+    candidate_high = None  # high candle A
+    candidate_low  = None  # low candle A
+    has_consol     = False
 
-            # Cari konsolidasi setelah A (minimal 1 candle tidak nembus low A)
-            consolidation_end = None
-            for j in range(i + 1, len(df)):
-                if df['low'].iloc[j] > low_a:
-                    # Candle ini konsolidasi
-                    consolidation_end = j
-                else:
-                    # Low A ditembus → BOS kecil selesai
-                    if consolidation_end is not None:
-                        # IDM valid: ada konsolidasi, lalu low ditembus
-                        idm_list.append({
-                            'high'     : high_a,  # level yang harus disentuh nanti
-                            'low'      : low_a,   # low A yang sudah ditembus
-                            'idx'      : i,
-                            'break_idx': j,       # candle yang nembus low A
-                            'ts'       : df['ts'].iloc[i]
-                        })
-                    break  # stop, low A sudah ditembus
+    for i in range(len(df) - 1):  # -1 = exclude candle live
+        c = df.iloc[i]
 
-    else:  # Short
-        # IDM bullish: cari BOS kecil ke atas yang sudah selesai
-        for i in range(0, len(df) - 2):
-            high_a = df['high'].iloc[i]
-            low_a  = df['low'].iloc[i]
+        if stype == "Long":
+            # ── Cari IDM bearish ──
+            if state == 'CARI_EKSTREM':
+                # Setiap candle bisa jadi kandidat A
+                # Ambil yang paling rendah sebagai kandidat
+                if candidate_low is None or c['low'] < candidate_low:
+                    candidate_low  = c['low']
+                    candidate_high = c['high']
+                    has_consol     = False
+                    state          = 'KONSOLIDASI'
 
-            consolidation_end = None
-            for j in range(i + 1, len(df)):
-                if df['high'].iloc[j] < high_a:
-                    consolidation_end = j
-                else:
-                    # High A ditembus → BOS kecil selesai
-                    if consolidation_end is not None:
-                        idm_list.append({
-                            'low'      : low_a,   # level yang harus disentuh nanti
-                            'high'     : high_a,  # high A yang sudah ditembus
-                            'idx'      : i,
-                            'break_idx': j,
-                            'ts'       : df['ts'].iloc[i]
-                        })
-                    break
+            elif state == 'KONSOLIDASI':
+                if c['low'] > candidate_low:
+                    # Konsolidasi valid
+                    has_consol = True
+                elif c['low'] <= candidate_low:
+                    if has_consol:
+                        # Low A ditembus → IDM selesai terbentuk
+                        state = 'TUNGGU_SENTUH'
+                    else:
+                        # Low baru tanpa konsolidasi → update kandidat A
+                        candidate_low  = c['low']
+                        candidate_high = c['high']
 
-    return idm_list
+            elif state == 'TUNGGU_SENTUH':
+                if c['low'] < candidate_low:
+                    # Low baru terbentuk sebelum IDM disentuh
+                    # → IDM lama tidak valid, mulai IDM baru
+                    candidate_low  = c['low']
+                    candidate_high = c['high']
+                    has_consol     = False
+                    state          = 'KONSOLIDASI'
+                elif c['high'] >= candidate_high:
+                    # High IDM disentuh! Freeze di sini
+                    df_until = df.iloc[:i+1]
+                    return {
+                        'phase'      : 'IDM_TOUCHED',
+                        'idm_level'  : candidate_high,
+                        'freeze_high': df_until['high'].max(),
+                        'freeze_low' : df_until['low'].min(),
+                        'freeze_ts'  : c['ts']
+                    }
 
+        else:  # Short — IDM bullish
+            if state == 'CARI_EKSTREM':
+                if candidate_high is None or c['high'] > candidate_high:
+                    candidate_high = c['high']
+                    candidate_low  = c['low']
+                    has_consol     = False
+                    state          = 'KONSOLIDASI'
 
-def find_latest_idm_touched(df, idm_list, stype, after_ts=0):
-    """
-    Dari list IDM yang sudah selesai (BOS kecil terbentuk),
-    cari yang sudah disentuh harga setelah IDM terbentuk.
+            elif state == 'KONSOLIDASI':
+                if c['high'] < candidate_high:
+                    has_consol = True
+                elif c['high'] >= candidate_high:
+                    if has_consol:
+                        state = 'TUNGGU_SENTUH'
+                    else:
+                        candidate_high = c['high']
+                        candidate_low  = c['low']
 
-    IDM bearish (Long): harga naik kembali menyentuh high candle A
-    IDM bullish (Short): harga turun kembali menyentuh low candle A
+            elif state == 'TUNGGU_SENTUH':
+                if c['high'] > candidate_high:
+                    # High baru sebelum IDM disentuh → IDM baru
+                    candidate_high = c['high']
+                    candidate_low  = c['low']
+                    has_consol     = False
+                    state          = 'KONSOLIDASI'
+                elif c['low'] <= candidate_low:
+                    # Low IDM disentuh!
+                    df_until = df.iloc[:i+1]
+                    return {
+                        'phase'      : 'IDM_TOUCHED',
+                        'idm_level'  : candidate_low,
+                        'freeze_high': df_until['high'].max(),
+                        'freeze_low' : df_until['low'].min(),
+                        'freeze_ts'  : c['ts']
+                    }
 
-    Scan dimulai dari candle setelah break (BOS kecil selesai),
-    bukan dari candle A — supaya tidak salah baca sentuhan sebelum BOS.
-    Kembalikan IDM terbaru yang disentuh.
-    """
-    touched = None
-    for idm in idm_list:
-        if idm['ts'] <= after_ts:
-            continue
-        # Scan dari setelah break_idx (BOS kecil sudah selesai)
-        start = idm.get('break_idx', idm['idx'] + 1) + 1
-        for j in range(start, len(df)):
-            if stype == "Long" and df['high'].iloc[j] >= idm['high']:
-                touched = dict(idm)
-                touched['touch_idx'] = j
-                touched['touch_ts']  = df['ts'].iloc[j]
-                break
-            elif stype == "Short" and df['low'].iloc[j] <= idm['low']:
-                touched = dict(idm)
-                touched['touch_idx'] = j
-                touched['touch_ts']  = df['ts'].iloc[j]
-                break
-    return touched
+    # Belum ada IDM yang disentuh — return state terkini
+    idm_level = candidate_high if stype == "Long" else candidate_low
+    return {
+        'phase'    : 'WAIT_IDM',
+        'idm_level': idm_level,
+        'state'    : state
+    }
 
 
 # ============================================================
@@ -562,52 +581,40 @@ def run_bot():
                     closed_m5 = df_m5.iloc[-2] if len(df_m5) >= 2 else curr_m5
 
                     # ── PHASE 2: TUNGGU IDM TERSENTUH ────────────────
-                    # Selalu fokus ke IDM TERBARU (paling kanan).
-                    # Kalau ada IDM baru terbentuk sebelum IDM lama disentuh,
-                    # IDM lama diabaikan otomatis karena kita ambil [-1].
+                    # Replay M5 kiri ke kanan untuk cari IDM terkini.
                     if setup['phase'] == "WAIT_IDM_TOUCH":
-                        idm_list = find_idm(df_m5, stype)
-                        if not idm_list:
-                            print(f"⏳ {coin}: Belum ada IDM ditemukan.")
+                        m5_state = replay_m5(df_m5, stype)
+
+                        if m5_state['phase'] == 'WAIT_IDM':
+                            idm_level = m5_state.get('idm_level')
+                            if idm_level:
+                                print(f"⏳ {coin}: IDM terbentuk @ {idm_level} | Menunggu disentuh...")
+                            else:
+                                print(f"⏳ {coin}: Belum ada IDM.")
                             if stype == "Long" and curr_m5['close'] >= setup['tp']:
                                 print(f"🗑️ {coin}: TP kena tanpa IDM."); del pending[coin]
                             elif stype == "Short" and curr_m5['close'] <= setup['tp']:
                                 print(f"🗑️ {coin}: TP kena tanpa IDM."); del pending[coin]
                             continue
 
-                        # Ambil IDM terbaru saja
-                        latest_idm = idm_list[-1]
-                        idm_level  = latest_idm['high'] if stype == "Long" else latest_idm['low']
-                        print(f"📍 {coin}: IDM terbaru @ {idm_level} (dari {len(idm_list)} IDM)")
+                        # IDM tersentuh
+                        idm_level   = m5_state['idm_level']
+                        freeze_high = m5_state['freeze_high']
+                        freeze_low  = m5_state['freeze_low']
+                        freeze_ts   = m5_state['freeze_ts']
 
-                        # Cek apakah IDM terbaru sudah disentuh
-                        touched = find_latest_idm_touched(df_m5, [latest_idm], stype)
-                        if touched:
-                            df_m5_at_touch = df_m5[df_m5['ts'] <= touched['touch_ts']]
-                            freeze_high    = df_m5_at_touch['high'].max()
-                            freeze_low     = df_m5_at_touch['low'].min()
+                        target_bos = freeze_low  if stype == "Long" else freeze_high
+                        target_mss = freeze_high if stype == "Long" else freeze_low
 
-                            if stype == "Long":
-                                target_bos = freeze_low
-                                target_mss = freeze_high
-                            else:
-                                target_bos = freeze_high
-                                target_mss = freeze_low
+                        print(f"💧 {coin}: IDM tersentuh @ {idm_level}")
+                        print(f"   → Target BOS M5 : {target_bos} ({'break bawah' if stype == 'Long' else 'break atas'})")
+                        print(f"   → Target MSS    : {target_mss} ({'break atas' if stype == 'Long' else 'break bawah'})")
 
-                            print(f"💧 {coin}: IDM tersentuh @ {idm_level}")
-                            print(f"   → Target BOS M5 : {target_bos} ({'break bawah' if stype == 'Long' else 'break atas'})")
-                            print(f"   → Target MSS    : {target_mss} ({'break atas' if stype == 'Long' else 'break bawah'})")
-
-                            pending[coin]['phase']           = "WAIT_BOS_BREAK"
-                            pending[coin]['idm_touched_val'] = idm_level
-                            pending[coin]['m5_freeze_high']  = freeze_high
-                            pending[coin]['m5_freeze_low']   = freeze_low
-                            pending[coin]['m5_freeze_ts']    = touched['touch_ts']
-                        else:
-                            if stype == "Long" and curr_m5['close'] >= setup['tp']:
-                                print(f"🗑️ {coin}: TP kena tanpa IDM touch."); del pending[coin]
-                            elif stype == "Short" and curr_m5['close'] <= setup['tp']:
-                                print(f"🗑️ {coin}: TP kena tanpa IDM touch."); del pending[coin]
+                        pending[coin]['phase']           = "WAIT_BOS_BREAK"
+                        pending[coin]['idm_touched_val'] = idm_level
+                        pending[coin]['m5_freeze_high']  = freeze_high
+                        pending[coin]['m5_freeze_low']   = freeze_low
+                        pending[coin]['m5_freeze_ts']    = freeze_ts
                         continue
 
                     # ── PHASE 3: TUNGGU BOS BREAK ─────────────────────
