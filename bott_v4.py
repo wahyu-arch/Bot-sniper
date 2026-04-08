@@ -18,9 +18,9 @@ if not API_KEY or not API_SECRET:
 session = HTTP(testnet=TESTNET, api_key=API_KEY, api_secret=API_SECRET)
 
 SYMBOLS = [
-    'XVGUSDT', 'BELUSDT', 'TAOUSDT', '1000BONKUSDT', 'BERAUSDT',
+    'XVGUSDT', 'BELUSDT', 'TAOUSDT', '1000BONKUSDT',  'BERAUSDT',
     'APTUSDT', 'DASHUSDT', 'DOGEUSDT', 'USUALUSDT',
-    'FARTCOINUSDT', '1000PEPEUSDT',
+     'FARTCOINUSDT', '1000PEPEUSDT',
 ]
 
 # ============================================================
@@ -103,94 +103,95 @@ def find_idm(df, stype):
     """
     Cari semua IDM (BOS single move) di M5.
 
-    IDM = pola A → [B..I konsolidasi] → J:
-      A        = candle yang bikin ekstrem (high untuk bearish, low untuk bullish)
-      B..I     = berapapun candle yang TIDAK melewati ekstrem A
-      J        = candle pertama yang melewati ekstrem A (IDM diambil)
+    IDM = puncak/lembah dari single move:
+      A        = candle puncak (bikin high untuk bearish, low untuk bullish)
+      B..I     = minimal 1 candle konsolidasi yang TIDAK melewati ekstrem A
+      → IDM terbentuk, level = high A (bearish) atau low A (bullish)
+      → IDM "disentuh" = harga kembali naik/turun menyentuh level A
 
-    H1 Bullish (Long) → cari IDM BEARISH:
-      A bikin high, konsolidasi tidak tembus high A, J tembus high A ke atas
-      → high A = level IDM, low A = swing low IDM
+    IDM BELUM ditembus saat terbentuk — berbeda dari versi sebelumnya.
+    "Ditembus" terjadi nanti saat harga sweep level IDM (dideteksi terpisah).
 
-    H1 Bearish (Short) → cari IDM BULLISH:
-      A bikin low, konsolidasi tidak tembus low A, J tembus low A ke bawah
-      → low A = level IDM, high A = swing high IDM
+    H1 Long  → IDM BEARISH: puncak single move turun, level = high A
+    H1 Short → IDM BULLISH: lembah single move naik, level = low A
     """
     idm_list = []
 
     if stype == "Long":
-        # IDM bearish: A bikin high → konsolidasi → J tembus high A ke atas
-        for i in range(0, len(df) - 2):
+        # IDM bearish: A = candle high, B..I tidak melewati high A
+        # IDM valid selama high A belum ditembus oleh candle setelahnya
+        for i in range(0, len(df) - 1):
             high_a = df['high'].iloc[i]
             low_a  = df['low'].iloc[i]
             has_consolidation = False
+            broken = False
             for j in range(i + 1, len(df)):
-                if df['high'].iloc[j] <= high_a:
+                if df['high'].iloc[j] < high_a:
+                    # Candle konsolidasi — belum tembus
                     has_consolidation = True
-                else:
-                    # J melewati high A
-                    if has_consolidation:
-                        idm_list.append({
-                            'high'     : high_a,   # level IDM yang disentuh
-                            'low'      : low_a,    # swing low IDM (untuk cek BOS break)
-                            'idx'      : i,
-                            'swept_idx': j,
-                            'ts'       : df['ts'].iloc[i]
-                        })
+                elif df['high'].iloc[j] >= high_a:
+                    # High A ditembus — IDM tidak valid lagi
+                    broken = True
                     break
+            # IDM valid jika ada konsolidasi dan belum ditembus sampai akhir data
+            if has_consolidation and not broken:
+                idm_list.append({
+                    'high': high_a,
+                    'low' : low_a,
+                    'idx' : i,
+                    'ts'  : df['ts'].iloc[i]
+                })
 
     else:  # Short
-        # IDM bullish: A bikin low → konsolidasi → J tembus low A ke bawah
-        for i in range(0, len(df) - 2):
+        # IDM bullish: A = candle low, B..I tidak melewati low A
+        for i in range(0, len(df) - 1):
             low_a  = df['low'].iloc[i]
             high_a = df['high'].iloc[i]
             has_consolidation = False
+            broken = False
             for j in range(i + 1, len(df)):
-                if df['low'].iloc[j] >= low_a:
+                if df['low'].iloc[j] > low_a:
                     has_consolidation = True
-                else:
-                    # J melewati low A
-                    if has_consolidation:
-                        idm_list.append({
-                            'low'      : low_a,    # level IDM yang disentuh
-                            'high'     : high_a,   # swing high IDM (untuk cek BOS break)
-                            'idx'      : i,
-                            'swept_idx': j,
-                            'ts'       : df['ts'].iloc[i]
-                        })
+                elif df['low'].iloc[j] <= low_a:
+                    broken = True
                     break
+            if has_consolidation and not broken:
+                idm_list.append({
+                    'low' : low_a,
+                    'high': high_a,
+                    'idx' : i,
+                    'ts'  : df['ts'].iloc[i]
+                })
 
     return idm_list
 
 
 def find_latest_idm_touched(df, idm_list, stype, after_ts=0):
     """
-    Dari list IDM, cari IDM terbaru yang sudah disentuh harga
-    (high-nya disentuh untuk Long, low-nya disentuh untuk Short)
-    setelah timestamp tertentu.
+    Dari list IDM yang valid (belum ditembus), cari yang sudah disentuh harga.
+    IDM bearish (Long): harga naik kembali menyentuh high IDM
+    IDM bullish (Short): harga turun kembali menyentuh low IDM
+    Kembalikan IDM terbaru (indeks terbesar) yang sudah disentuh.
     """
     touched = None
     for idm in idm_list:
-        if idm['ts'] <= after_ts:
+        if df['ts'].iloc[idm['idx']] <= after_ts:
             continue
-        if stype == "Long":
-            # IDM bearish: tunggu harga naik sentuh high IDM
-            idm_idx = idm['idx']
-            for j in range(idm['swept_idx'], len(df)):
-                if df['high'].iloc[j] >= idm['high']:
-                    touched = idm
-                    touched['touch_idx'] = j
-                    touched['touch_ts']  = df['ts'].iloc[j]
-                    break
-        else:
-            # IDM bullish: tunggu harga turun sentuh low IDM
-            idm_idx = idm['idx']
-            for j in range(idm['swept_idx'], len(df)):
-                if df['low'].iloc[j] <= idm['low']:
-                    touched = idm
-                    touched['touch_idx'] = j
-                    touched['touch_ts']  = df['ts'].iloc[j]
-                    break
+        # Scan candle setelah IDM terbentuk — apakah ada yang menyentuh levelnya
+        for j in range(idm['idx'] + 1, len(df)):
+            if stype == "Long" and df['high'].iloc[j] >= idm['high']:
+                # High IDM disentuh
+                touched = dict(idm)
+                touched['touch_idx'] = j
+                touched['touch_ts']  = df['ts'].iloc[j]
+                break
+            elif stype == "Short" and df['low'].iloc[j] <= idm['low']:
+                # Low IDM disentuh
+                touched = dict(idm)
+                touched['touch_idx'] = j
+                touched['touch_ts']  = df['ts'].iloc[j]
+                break
+    # Kembalikan yang paling baru (terakhir dalam list)
     return touched
 
 
@@ -440,13 +441,13 @@ def replay_h1(coin, df_h1):
     state['phase']        = phase
     state['fvg_touch_ts'] = fvg_touch_ts
 
-    print(f"\n📊 {coin} | BOS {stype} | H:{sh_h1[-1]['val']} L:{sl_h1[-1]['val']}")
+    print(f"\n📊 {coin} : BOS {stype}  | H:{sh_h1[-1]['val']}  L:{sl_h1[-1]['val']}")
     print(f"🔄 {coin}: Replay → Phase:{phase} FVG:{fvg_idx+1}/{len(gaps)}")
     return state
 
 
 def reconstruct_state():
-    print("🔍 Reconstruct state dari H1...")
+    
     for coin in SYMBOLS:
         try:
             time.sleep(1)
@@ -455,8 +456,7 @@ def reconstruct_state():
             state = replay_h1(coin, df_h1)
             if state:
                 pending[coin] = state
-                print(f"✅ {coin}: Restored → {state['phase']}")
-           
+                
         except Exception as e:
             print(f"⚠️ Replay {coin}: {e}")
     print(f"🔍 Selesai. {len(pending)} coin dimonitor.\n")
