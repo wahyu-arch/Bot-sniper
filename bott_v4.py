@@ -18,9 +18,9 @@ if not API_KEY or not API_SECRET:
 session = HTTP(testnet=TESTNET, api_key=API_KEY, api_secret=API_SECRET)
 
 SYMBOLS = [
-    'XVGUSDT', 'BELUSDT', 'TAOUSDT', '1000BONKUSDT', 'PLUMEUSDT', 'BERAUSDT',
-    'APTUSDT', 'DASHUSDT', 'DOGEUSDT', 'JUPUSDT', 'USUALUSDT',
-    'UNIUSDT', 'HANAUSDT', 'FARTCOINUSDT', '1000PEPEUSDT',
+    'XVGUSDT', 'BELUSDT', 'TAOUSDT', '1000BONKUSDT', 'BERAUSDT',
+    'APTUSDT', 'DASHUSDT', 'DOGEUSDT', 'USUALUSDT',
+    'FARTCOINUSDT', '1000PEPEUSDT',
 ]
 
 # ============================================================
