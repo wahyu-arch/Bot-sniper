@@ -455,8 +455,7 @@ def reconstruct_state():
             if state:
                 pending[coin] = state
                 print(f"✅ {coin}: Restored → {state['phase']}")
-            else:
-                print(f"   {coin}: Tidak ada setup.")
+           
         except Exception as e:
             print(f"⚠️ Replay {coin}: {e}")
     print(f"🔍 Selesai. {len(pending)} coin dimonitor.\n")
@@ -495,7 +494,7 @@ def run_bot():
                 curr_h1   = df_h1_live.iloc[-1]
                 closed_h1 = df_h1_live.iloc[-2]
 
-                print(f"\n📊 {coin} | H:{sh_h1[-1]['val']} C:{curr_h1['close']} L:{sl_h1[-1]['val']}")
+                
 
                 # ── PROSES SETUP PENDING ──────────────────────────────
                 if coin in pending:
@@ -744,6 +743,7 @@ def run_bot():
                     'm5_freeze_high': None, 'm5_freeze_low': None, 'm5_freeze_ts': None,
                     'idm_list': [], 'idm_touched_val': None,
                 }
+                print(f"\n📊 {coin} | H:{sh_h1[-1]['val']} C:{curr_h1['close']} L:{sl_h1[-1]['val']}")
                 print(f"🎯 {coin}: BOS {stype} | {len(gaps)} FVG | TP:{tp_val}")
                 for i, g in enumerate(gaps):
                     print(f"   FVG {i+1}: bottom:{g['bottom']} top:{g['top']}")
