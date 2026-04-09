@@ -99,74 +99,65 @@ def find_swings(df, left=2, right=2):
 # FUNGSI IDM — REPLAY KIRI KE KANAN
 # ============================================================
 
+
 def replay_m5(df, stype):
     """
-    Replay candle M5 dari kiri ke kanan untuk cari state IDM terkini.
+    Replay candle M5 dari kiri ke kanan, state machine IDM.
 
-    Untuk H1 Long (IDM bearish):
-      State machine per candle:
-      1. CARI_LOW   : cari candle yang bikin low baru (kandidat A)
-      2. KONSOLIDASI: setelah dapat low A, tunggu minimal 1 candle tidak tembus low A
-      3. BREAK      : low A ditembus → IDM selesai, level IDM = high A
-      4. TUNGGU_SENTUH: tunggu harga naik kembali menyentuh high A
-         → Kalau low baru terbentuk sebelum disentuh → IDM baru, reset ke step 1
-         → Kalau high A disentuh → IDM tersentuh, return result
+    IDM Bearish (H1 Long):
+      SINGLE_MOVE : update kandidat A ke low lebih rendah terus
+      KONSOLIDASI : low > low A → tunggu break
+                    kalau break (low < low A) → TUNGGU_SENTUH, kandidat A TIDAK berubah
+      TUNGGU_SENTUH:
+        - low baru < low A → IDM baru, reset ke SINGLE_MOVE
+        - high >= high A   → IDM disentuh!
 
-    Untuk H1 Short (IDM bullish): sebaliknya.
-
-    Return dict:
-      {'phase': 'WAIT_IDM'  | 'IDM_TOUCHED',
-       'idm_level': float,   -- high A (Long) atau low A (Short)
-       'freeze_high': float, -- high saat IDM disentuh (untuk freeze)
-       'freeze_low' : float, -- low saat IDM disentuh
-       'freeze_ts'  : int }
+    IDM Bullish (H1 Short): sebaliknya.
     """
     if len(df) < 3:
         return {'phase': 'WAIT_IDM', 'idm_level': None}
 
-    # State machine
-    state          = 'CARI_EKSTREM'  # CARI_EKSTREM → KONSOLIDASI → BREAK → TUNGGU_SENTUH
-    candidate_high = None  # high candle A
-    candidate_low  = None  # low candle A
-    has_consol     = False
+    state          = 'SINGLE_MOVE'
+    candidate_high = None
+    candidate_low  = None
 
-    for i in range(len(df) - 1):  # -1 = exclude candle live
+    for i in range(len(df) - 1):
         c = df.iloc[i]
 
         if stype == "Long":
-            # ── Cari IDM bearish ──
-            if state == 'CARI_EKSTREM':
-                # Setiap candle bisa jadi kandidat A
-                # Ambil yang paling rendah sebagai kandidat
-                if candidate_low is None or c['low'] < candidate_low:
+
+            if state == 'SINGLE_MOVE':
+                if candidate_low is None or c['low'] <= candidate_low:
+                    # Low baru/sama → single move terus, update kandidat A
                     candidate_low  = c['low']
                     candidate_high = c['high']
-                    has_consol     = False
-                    state          = 'KONSOLIDASI'
+                else:
+                    # Low lebih tinggi → masuk konsolidasi
+                    state = 'KONSOLIDASI'
+                    # Proses ulang candle ini di state KONSOLIDASI
+                    i -= 1  # tidak bisa mundur di for loop, handle di bawah
+                    # Cukup pindah state, candle berikutnya akan diproses di KONSOLIDASI
 
             elif state == 'KONSOLIDASI':
-                if c['low'] > candidate_low:
-                    # Konsolidasi valid
-                    has_consol = True
-                elif c['low'] <= candidate_low:
-                    if has_consol:
-                        # Low A ditembus → IDM selesai terbentuk
-                        state = 'TUNGGU_SENTUH'
-                    else:
-                        # Low baru tanpa konsolidasi → update kandidat A
-                        candidate_low  = c['low']
-                        candidate_high = c['high']
+                if c['low'] < candidate_low:
+                    # Low A ditembus setelah konsolidasi → IDM selesai!
+                    # Simpan high A sebagai level IDM
+                    # Update candidate_low ke low candle yang break
+                    # supaya di TUNGGU_SENTUH tidak salah reset
+                    idm_high      = candidate_high  # simpan high A
+                    candidate_low = c['low']         # update ke low yang break
+                    candidate_high = idm_high        # high A tetap
+                    state = 'TUNGGU_SENTUH'
+                # low >= candidate_low → masih konsolidasi, lanjut
 
             elif state == 'TUNGGU_SENTUH':
                 if c['low'] < candidate_low:
-                    # Low baru terbentuk sebelum IDM disentuh
-                    # → IDM lama tidak valid, mulai IDM baru
+                    # Low baru lebih rendah → IDM lama batal, mulai baru
                     candidate_low  = c['low']
                     candidate_high = c['high']
-                    has_consol     = False
-                    state          = 'KONSOLIDASI'
+                    state          = 'SINGLE_MOVE'
                 elif c['high'] >= candidate_high:
-                    # High IDM disentuh! Freeze di sini
+                    # High IDM disentuh!
                     df_until = df.iloc[:i+1]
                     return {
                         'phase'      : 'IDM_TOUCHED',
@@ -177,32 +168,26 @@ def replay_m5(df, stype):
                     }
 
         else:  # Short — IDM bullish
-            if state == 'CARI_EKSTREM':
-                if candidate_high is None or c['high'] > candidate_high:
+
+            if state == 'SINGLE_MOVE':
+                if candidate_high is None or c['high'] >= candidate_high:
                     candidate_high = c['high']
                     candidate_low  = c['low']
-                    has_consol     = False
-                    state          = 'KONSOLIDASI'
+                else:
+                    state = 'KONSOLIDASI'
 
             elif state == 'KONSOLIDASI':
-                if c['high'] < candidate_high:
-                    has_consol = True
-                elif c['high'] >= candidate_high:
-                    if has_consol:
-                        state = 'TUNGGU_SENTUH'
-                    else:
-                        candidate_high = c['high']
-                        candidate_low  = c['low']
+                if c['high'] > candidate_high:
+                    # High A ditembus → IDM selesai!
+                    state = 'TUNGGU_SENTUH'
+                # high <= candidate_high → masih konsolidasi
 
             elif state == 'TUNGGU_SENTUH':
                 if c['high'] > candidate_high:
-                    # High baru sebelum IDM disentuh → IDM baru
                     candidate_high = c['high']
                     candidate_low  = c['low']
-                    has_consol     = False
-                    state          = 'KONSOLIDASI'
+                    state          = 'SINGLE_MOVE'
                 elif c['low'] <= candidate_low:
-                    # Low IDM disentuh!
                     df_until = df.iloc[:i+1]
                     return {
                         'phase'      : 'IDM_TOUCHED',
@@ -212,13 +197,8 @@ def replay_m5(df, stype):
                         'freeze_ts'  : c['ts']
                     }
 
-    # Belum ada IDM yang disentuh — return state terkini
     idm_level = candidate_high if stype == "Long" else candidate_low
-    return {
-        'phase'    : 'WAIT_IDM',
-        'idm_level': idm_level,
-        'state'    : state
-    }
+    return {'phase': 'WAIT_IDM', 'idm_level': idm_level, 'state': state}
 
 
 # ============================================================
