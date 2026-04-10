@@ -168,6 +168,12 @@ def replay_m5(df, stype):
                     }
 
         else:  # Short — IDM bullish
+            # SINGLE_MOVE  : update kandidat A ke high lebih tinggi
+            # KONSOLIDASI  : high < high A → tunggu break
+            #   kalau high ditembus → IDM selesai, candidate_high update ke breaker
+            #   candidate_low (low A) tetap sebagai level IDM
+            # TUNGGU_SENTUH: low baru < low A → IDM baru, reset
+            #                low <= candidate_low → IDM_TOUCHED
 
             if state == 'SINGLE_MOVE':
                 if candidate_high is None or c['high'] >= candidate_high:
@@ -179,15 +185,19 @@ def replay_m5(df, stype):
             elif state == 'KONSOLIDASI':
                 if c['high'] > candidate_high:
                     # High A ditembus → IDM selesai!
-                    state = 'TUNGGU_SENTUH'
+                    # low A tetap sebagai level IDM, update candidate_high ke breaker
+                    idm_low        = candidate_low
+                    candidate_high = c['high']
+                    candidate_low  = idm_low
+                    state          = 'TUNGGU_SENTUH'
                 # high <= candidate_high → masih konsolidasi
 
             elif state == 'TUNGGU_SENTUH':
                 if c['high'] > candidate_high:
+                    # High lebih tinggi → update candidate_high (single move lanjut)
                     candidate_high = c['high']
-                    candidate_low  = c['low']
-                    state          = 'SINGLE_MOVE'
                 elif c['low'] <= candidate_low:
+                    # Low IDM disentuh!
                     df_until = df.iloc[:i+1]
                     return {
                         'phase'      : 'IDM_TOUCHED',
@@ -197,6 +207,8 @@ def replay_m5(df, stype):
                         'freeze_ts'  : c['ts']
                     }
 
+    # Long:  idm_level = high A (sentuh dari bawah ke atas)
+    # Short: idm_level = low A  (sentuh dari atas ke bawah)
     idm_level = candidate_high if stype == "Long" else candidate_low
     return {'phase': 'WAIT_IDM', 'idm_level': idm_level, 'state': state}
 
