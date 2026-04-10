@@ -57,7 +57,7 @@ active_positions = {}
 # FUNGSI DATA
 # ============================================================
 
-def get_data(symbol, interval, limit=200):
+def get_data(symbol, interval, limit=100):
     try:
         res = session.get_kline(
             category=CATEGORY, symbol=symbol,
@@ -487,7 +487,7 @@ def reconstruct_state():
 # ============================================================
 
 def run_bot():
-    print("🚀 SNIPER V4 | SMC FULL LOGIC | ACTIVE")
+    print("🚀 BEGO MONEY CONCEPT")
     if not test_connection():
         print("⛔ Tidak bisa konek ke Bybit.")
         return
@@ -506,10 +506,10 @@ def run_bot():
             try:
                 time.sleep(2)  # Hindari rate limit
 
-                df_h1_live = get_data(coin, "60", limit=150)
+                df_h1_live = get_data(coin, "60", limit=100)
                 if df_h1_live is None: continue
 
-                sh_h1, sl_h1 = find_swings(df_h1_live, left=25, right=25)
+                sh_h1, sl_h1 = find_swings(df_h1_live, left=8, right=8)
                 if not sh_h1 or not sl_h1: continue
 
                 curr_h1   = df_h1_live.iloc[-1]
@@ -561,7 +561,7 @@ def run_bot():
                     # Anchor M5 dari swing H1 (high untuk Long, low untuk Short)
                     # supaya tidak salah baca MSS dari data sebelum retrace
                     time.sleep(1)
-                    df_m5_live = get_data(coin, "5", limit=200)
+                    df_m5_live = get_data(coin, "5", limit=100)
                     if df_m5_live is None: continue
 
                     swing_ts = setup.get('swing_ts', setup['bos_ts'])
