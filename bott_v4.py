@@ -57,7 +57,7 @@ active_positions = {}
 # FUNGSI DATA
 # ============================================================
 
-def get_data(symbol, interval, limit=100):
+def get_data(symbol, interval, limit=200):
     try:
         res = session.get_kline(
             category=CATEGORY, symbol=symbol,
@@ -120,6 +120,7 @@ def replay_m5(df, stype):
     state          = 'SINGLE_MOVE'
     candidate_high = None
     candidate_low  = None
+    idm_start_idx  = 0  # index candle saat IDM terbentuk (masuk TUNGGU_SENTUH)
 
     for i in range(len(df) - 1):
         c = df.iloc[i]
@@ -141,24 +142,21 @@ def replay_m5(df, stype):
             elif state == 'KONSOLIDASI':
                 if c['low'] < candidate_low:
                     # Low A ditembus setelah konsolidasi → IDM selesai!
-                    # Simpan high A sebagai level IDM
-                    # Update candidate_low ke low candle yang break
-                    # supaya di TUNGGU_SENTUH tidak salah reset
-                    idm_high      = candidate_high  # simpan high A
-                    candidate_low = c['low']         # update ke low yang break
-                    candidate_high = idm_high        # high A tetap
+                    idm_high      = candidate_high
+                    candidate_low = c['low']
+                    candidate_high = idm_high
+                    idm_start_idx = i  # simpan index saat IDM terbentuk
                     state = 'TUNGGU_SENTUH'
-                # low >= candidate_low → masih konsolidasi, lanjut
+                # low >= candidate_low → masih konsolidasi
 
             elif state == 'TUNGGU_SENTUH':
                 if c['low'] < candidate_low:
-                    # Low baru lebih rendah → IDM lama batal, mulai baru
                     candidate_low  = c['low']
                     candidate_high = c['high']
                     state          = 'SINGLE_MOVE'
                 elif c['high'] >= candidate_high:
-                    # High IDM disentuh!
-                    df_until = df.iloc[:i+1]
+                    # High IDM disentuh! Freeze dari range IDM A saja
+                    df_until = df.iloc[idm_start_idx:i+1]
                     return {
                         'phase'      : 'IDM_TOUCHED',
                         'idm_level'  : candidate_high,
@@ -185,20 +183,17 @@ def replay_m5(df, stype):
             elif state == 'KONSOLIDASI':
                 if c['high'] > candidate_high:
                     # High A ditembus → IDM selesai!
-                    # low A tetap sebagai level IDM, update candidate_high ke breaker
                     idm_low        = candidate_low
                     candidate_high = c['high']
                     candidate_low  = idm_low
+                    idm_start_idx  = i  # simpan index saat IDM terbentuk
                     state          = 'TUNGGU_SENTUH'
                 # high <= candidate_high → masih konsolidasi
 
             elif state == 'TUNGGU_SENTUH':
-                if c['high'] > candidate_high:
-                    # High lebih tinggi → update candidate_high (single move lanjut)
-                    candidate_high = c['high']
-                elif c['low'] <= candidate_low:
-                    # Low IDM disentuh!
-                    df_until = df.iloc[:i+1]
+                if c['low'] <= candidate_low:
+                    # Low IDM disentuh! Freeze dari range IDM A saja
+                    df_until = df.iloc[idm_start_idx:i+1]
                     return {
                         'phase'      : 'IDM_TOUCHED',
                         'idm_level'  : candidate_low,
@@ -206,6 +201,10 @@ def replay_m5(df, stype):
                         'freeze_low' : df_until['low'].min(),
                         'freeze_ts'  : c['ts']
                     }
+                elif c['high'] > candidate_high:
+                    candidate_high = c['high']
+                    candidate_low  = c['low']
+                    state          = 'SINGLE_MOVE'  
 
     # Long:  idm_level = high A (sentuh dari bawah ke atas)
     # Short: idm_level = low A  (sentuh dari atas ke bawah)
@@ -471,7 +470,7 @@ def reconstruct_state():
     for coin in SYMBOLS:
         try:
             time.sleep(1)
-            df_h1 = get_data(coin, "60", limit=150)
+            df_h1 = get_data(coin, "60", limit=100)
             if df_h1 is None: continue
             state = replay_h1(coin, df_h1)
             if state:
@@ -487,7 +486,7 @@ def reconstruct_state():
 # ============================================================
 
 def run_bot():
-    print("🚀 BEGO MONEY CONCEPT")
+    print("🚀 SNIPER V4 | SMC FULL LOGIC | ACTIVE")
     if not test_connection():
         print("⛔ Tidak bisa konek ke Bybit.")
         return
@@ -561,7 +560,7 @@ def run_bot():
                     # Anchor M5 dari swing H1 (high untuk Long, low untuk Short)
                     # supaya tidak salah baca MSS dari data sebelum retrace
                     time.sleep(1)
-                    df_m5_live = get_data(coin, "5", limit=100)
+                    df_m5_live = get_data(coin, "5", limit=200)
                     if df_m5_live is None: continue
 
                     swing_ts = setup.get('swing_ts', setup['bos_ts'])
